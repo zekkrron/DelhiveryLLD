@@ -1,0 +1,301 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <map>
+#include <stdexcept>
+
+// Forward declarations to resolve circular dependencies
+class VendingMachine;
+class State;
+
+//---------------------------------------------------------
+// 1. Core Data Structures
+//---------------------------------------------------------
+
+class Item {
+private:
+    std::string name;
+    int price; // For simplicity, we assume price is 1 coin
+
+public:
+    // FIX: Added a default constructor so std::map can create default pairs.
+    Item() : name(""), price(0) {}
+
+    Item(std::string name, int price) : name(name), price(price) {}
+
+    std::string getName() const {
+        return name;
+    }
+
+    int getPrice() const {
+        return price;
+    }
+};
+
+class Inventory {
+private:
+    // Maps an aisle code to a pair of (Item, quantity)
+    std::map<int, std::pair<Item, int>> aisleToItemMap;
+
+public:
+    Inventory() = default;
+
+    void addItem(int aisleCode, Item item, int quantity) {
+        aisleToItemMap[aisleCode] = {item, quantity};
+    }
+
+    Item* getItem(int aisleCode) {
+        // Using .find() and -> is safer than [] as it doesn't insert on failure
+        auto it = aisleToItemMap.find(aisleCode);
+        if (it != aisleToItemMap.end()) {
+            return &it->second.first;
+        }
+        return nullptr;
+    }
+
+    bool isAvailable(int aisleCode) {
+        auto it = aisleToItemMap.find(aisleCode);
+        if (it != aisleToItemMap.end()) {
+            return it->second.second > 0;
+        }
+        return false;
+    }
+
+    void reduceStock(int aisleCode) {
+        if (isAvailable(aisleCode)) {
+            aisleToItemMap[aisleCode].second--;
+        }
+    }
+};
+
+
+//---------------------------------------------------------
+// 2. State Pattern Implementation
+//---------------------------------------------------------
+
+// Abstract State Class
+class State {
+public:
+    virtual ~State() = default;
+    virtual void insertCoin(VendingMachine* machine) = 0;
+    virtual void pressButton(VendingMachine* machine, int aisleCode) = 0;
+    virtual void dispenseItem(VendingMachine* machine, int aisleCode) = 0;
+};
+
+// Concrete State Implementations
+class NoCoinInsertedState;
+class CoinInsertedState;
+class DispensingState;
+class SoldOutState;
+
+class DispensingState : public State {
+public:
+    void insertCoin(VendingMachine* machine) override;
+    void pressButton(VendingMachine* machine, int aisleCode) override;
+    void dispenseItem(VendingMachine* machine, int aisleCode) override;
+};
+
+class CoinInsertedState : public State {
+public:
+    void insertCoin(VendingMachine* machine) override;
+    void pressButton(VendingMachine* machine, int aisleCode) override;
+    void dispenseItem(VendingMachine* machine, int aisleCode) override;
+};
+
+class NoCoinInsertedState : public State {
+public:
+    void insertCoin(VendingMachine* machine) override;
+    void pressButton(VendingMachine* machine, int aisleCode) override;
+    void dispenseItem(VendingMachine* machine, int aisleCode) override;
+};
+
+class SoldOutState : public State {
+public:
+    void insertCoin(VendingMachine* machine) override;
+    void pressButton(VendingMachine* machine, int aisleCode) override;
+    void dispenseItem(VendingMachine* machine, int aisleCode) override;
+};
+
+
+//---------------------------------------------------------
+// 3. The Vending Machine (Context & Singleton)
+//---------------------------------------------------------
+
+class VendingMachine {
+private:
+    static VendingMachine* instance;
+    State* currentState;
+    Inventory* inventory;
+    int coinCount;
+
+    // Private constructor for Singleton
+    VendingMachine() {
+        inventory = new Inventory();
+        // The initial state of the machine
+        currentState = new NoCoinInsertedState();
+        coinCount = 0;
+    }
+
+public:
+    // Deleted copy constructor and assignment operator
+    VendingMachine(const VendingMachine&) = delete;
+    void operator=(const VendingMachine&) = delete;
+    
+    ~VendingMachine() {
+        delete inventory;
+        delete currentState;
+    }
+
+    static VendingMachine* getInstance() {
+        if (instance == nullptr) {
+            instance = new VendingMachine();
+        }
+        return instance;
+    }
+
+    void setState(State* newState) {
+        if (currentState != nullptr) {
+            delete currentState;
+        }
+        currentState = newState;
+    }
+
+    Inventory* getInventory() const {
+        return inventory;
+    }
+
+    int getCoinCount() const {
+        return coinCount;
+    }
+
+    void setCoinCount(int count) {
+        this->coinCount = count;
+    }
+
+    // Delegate actions to the current state
+    void insertCoin() {
+        currentState->insertCoin(this);
+    }
+
+    void pressButton(int aisleCode) {
+        currentState->pressButton(this, aisleCode);
+        // After pressing the button, we try to dispense immediately
+        // In a real machine, this might be two separate actions
+        currentState->dispenseItem(this, aisleCode);
+    }
+};
+
+// Initialize static instance
+VendingMachine* VendingMachine::instance = nullptr;
+
+
+//---------------------------------------------------------
+// 4. Defining State Behaviors
+//---------------------------------------------------------
+
+// --- NoCoinInsertedState ---
+void NoCoinInsertedState::insertCoin(VendingMachine* machine) {
+    std::cout << "Coin inserted." << std::endl;
+    machine->setCoinCount(1);
+    machine->setState(new CoinInsertedState());
+}
+void NoCoinInsertedState::pressButton(VendingMachine* machine, int aisleCode) {
+    std::cout << "Please insert a coin first." << std::endl;
+}
+void NoCoinInsertedState::dispenseItem(VendingMachine* machine, int aisleCode) {
+    std::cout << "Payment required before dispensing." << std::endl;
+}
+
+// --- CoinInsertedState ---
+void CoinInsertedState::insertCoin(VendingMachine* machine) {
+    std::cout << "Coin already inserted. Please select an item." << std::endl;
+}
+void CoinInsertedState::pressButton(VendingMachine* machine, int aisleCode) {
+    Inventory* inventory = machine->getInventory();
+    if (!inventory->isAvailable(aisleCode)) {
+        std::cout << "Sorry, that item is sold out." << std::endl;
+        machine->setState(new SoldOutState());
+        return;
+    }
+    std::cout << "Button " << aisleCode << " pressed. Preparing to dispense." << std::endl;
+    machine->setState(new DispensingState());
+}
+void CoinInsertedState::dispenseItem(VendingMachine* machine, int aisleCode) {
+    std::cout << "Please press a button to select an item." << std::endl;
+}
+
+// --- DispensingState ---
+void DispensingState::insertCoin(VendingMachine* machine) {
+    std::cout << "Please wait, currently dispensing an item." << std::endl;
+}
+void DispensingState::pressButton(VendingMachine* machine, int aisleCode) {
+    std::cout << "Dispensing in progress, please wait." << std::endl;
+}
+void DispensingState::dispenseItem(VendingMachine* machine, int aisleCode) {
+    Inventory* inventory = machine->getInventory();
+    Item* item = inventory->getItem(aisleCode);
+    std::cout << "Dispensing " << item->getName() << "..." << std::endl;
+    inventory->reduceStock(aisleCode);
+    machine->setCoinCount(0);
+    std::cout << "Item dispensed. Thank you!" << std::endl;
+    machine->setState(new NoCoinInsertedState());
+}
+
+// --- SoldOutState ---
+void SoldOutState::insertCoin(VendingMachine* machine) {
+    std::cout << "Cannot insert coin, item is sold out." << std::endl;
+}
+void SoldOutState::pressButton(VendingMachine* machine, int aisleCode) {
+    std::cout << "Sorry, that item is sold out." << std::endl;
+}
+void SoldOutState::dispenseItem(VendingMachine* machine, int aisleCode) {
+    std::cout << "Cannot dispense a sold out item." << std::endl;
+    // In a real scenario, we would return the coin here.
+    std::cout << "Returning your coin." << std::endl;
+    machine->setCoinCount(0);
+    machine->setState(new NoCoinInsertedState());
+}
+
+
+//---------------------------------------------------------
+// 5. Main Driver Code
+//---------------------------------------------------------
+
+int main() {
+    // Get the singleton instance of the vending machine
+    VendingMachine* machine = VendingMachine::getInstance();
+
+    // Load inventory
+    machine->getInventory()->addItem(101, Item("Coke", 1), 5);
+    machine->getInventory()->addItem(102, Item("Pepsi", 1), 3);
+    machine->getInventory()->addItem(103, Item("Chips", 1), 0); // Sold out item
+
+    std::cout << "--- Vending Machine Initialized ---" << std::endl;
+
+    // Scenario 1: Successful purchase
+    std::cout << "\n--- Scenario 1: Buying a Coke ---" << std::endl;
+    machine->pressButton(101); // Fails: No coin
+    machine->insertCoin();     // Success
+    machine->pressButton(101); // Success: Dispenses Coke
+
+    // Scenario 2: Another successful purchase
+    std::cout << "\n--- Scenario 2: Buying a Pepsi ---" << std::endl;
+    machine->insertCoin();
+    machine->pressButton(102);
+
+    // Scenario 3: Trying to buy a sold-out item
+    std::cout << "\n--- Scenario 3: Trying to buy sold-out Chips ---" << std::endl;
+    machine->insertCoin();
+    machine->pressButton(103); // Fails: Sold out, state changes and coin is returned
+
+    // Scenario 4: Inserting coin then trying to insert another
+    std::cout << "\n--- Scenario 4: Inserting two coins ---" << std::endl;
+    machine->insertCoin();
+    machine->insertCoin();     // Fails: Coin already present
+    machine->pressButton(101); // Can still buy an item
+
+    // Cleanup
+    delete machine;
+
+    return 0;
+}
