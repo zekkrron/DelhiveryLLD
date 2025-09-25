@@ -75,7 +75,6 @@ public:
 
         if(currentSize == capacity) {
             Node* deletionNode = tail->left;
-            mpp.erase(deletionNode->key);
             deleteNode(deletionNode);
             currentSize--;
         }
